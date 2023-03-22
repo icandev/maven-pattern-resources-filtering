@@ -9,20 +9,20 @@ import org.slf4j.LoggerFactory;
 import org.sonatype.plexus.build.incremental.BuildContext;
 
 import javax.inject.Inject;
-import java.lang.reflect.Method;
-import java.util.Optional;
-import java.util.Properties;
+import java.util.*;
 
 @Component(role = MavenResourcesFiltering.class, hint = "default")
 public class PatternMavenResourcesFiltering extends DefaultMavenResourcesFiltering {
     private static final Logger LOGGER = LoggerFactory.getLogger(PatternMavenResourcesFiltering.class);
     private static final String KEY_FILTERING_DEFAULT = "resource.filtering.default";
-    private static final String DEFAULT_DELIMITER = "@";
     private static final String DEFAULT_PATTERN = "${$key}";
+
+    private final MavenFileFilter mavenFileFilter;
 
     @Inject
     public PatternMavenResourcesFiltering(MavenFileFilter mavenFileFilter, BuildContext buildContext) {
         super(mavenFileFilter, buildContext);
+        this.mavenFileFilter = mavenFileFilter;
     }
 
     @Override
@@ -32,35 +32,43 @@ public class PatternMavenResourcesFiltering extends DefaultMavenResourcesFilteri
             mavenResourcesExecution.setUseDefaultFilterWrappers(false);
         }
 
-        // Ajout d'un FilterWrapper pour les valeurs par défaut
-        String defaultPattern = DEFAULT_PATTERN;
-        MavenProject mavenProject = mavenResourcesExecution.getMavenProject();
-        Properties properties = Optional.ofNullable(mavenProject)
-                .map(MavenProject::getProperties)
-                .orElse(new Properties());
+        String defaultPattern = resolveDefaultPattern(mavenResourcesExecution);
+        LinkedHashSet<String> delimiters = mavenResourcesExecution.getDelimiters();
+        MissingValueSource missingValueSource = new MissingValueSource(defaultPattern, delimiters);
 
-        if (properties.containsKey(KEY_FILTERING_DEFAULT)) {
-            defaultPattern = (String) properties.get(KEY_FILTERING_DEFAULT);
+        for (String delimiter : delimiters) {
+            TokenPattern token = new TokenPattern(delimiter);
+            mavenResourcesExecution.addFilerWrapperWithEscaping(
+                missingValueSource, token.getStartExp(), token.getEndExp(), "\\", false
+            );
         }
-
-        MissingValueSource missingValueSource = new MissingValueSource(defaultPattern);
-        mavenResourcesExecution.addFilerWrapperWithEscaping(missingValueSource, DEFAULT_DELIMITER, DEFAULT_DELIMITER, "\\", false);
 
         super.filterResources(mavenResourcesExecution);
         outputFeedback(missingValueSource);
     }
 
-    private void initDefaultFilterWrappers(MavenResourcesExecution mavenResourcesExecution) {
-        try {
-            Method method = DefaultMavenResourcesFiltering.class.getDeclaredMethod(
-                "handleDefaultFilterWrappers", MavenResourcesExecution.class
-            );
-
-            method.setAccessible(true);
-            method.invoke(this, mavenResourcesExecution);
-        } catch (Exception e) {
-            throw new RuntimeException(e);
+    private void initDefaultFilterWrappers(MavenResourcesExecution mavenResourcesExecution) throws MavenFilteringException {
+        List<FilterWrapper> filterWrappers = new ArrayList<>();
+        if (mavenResourcesExecution.getFilterWrappers() != null) {
+            filterWrappers.addAll(mavenResourcesExecution.getFilterWrappers());
         }
+
+        filterWrappers.addAll(mavenFileFilter.getDefaultFilterWrappers(mavenResourcesExecution));
+        mavenResourcesExecution.setFilterWrappers(filterWrappers);
+    }
+
+    private String resolveDefaultPattern(MavenResourcesExecution mavenResourcesExecution) {
+        String defaultPattern = DEFAULT_PATTERN;
+        MavenProject mavenProject = mavenResourcesExecution.getMavenProject();
+        Properties properties = Optional.ofNullable(mavenProject)
+            .map(MavenProject::getProperties)
+            .orElse(new Properties());
+
+        if (properties.containsKey(KEY_FILTERING_DEFAULT)) {
+            defaultPattern = (String) properties.get(KEY_FILTERING_DEFAULT);
+        }
+
+        return defaultPattern;
     }
 
     private void outputFeedback(MissingValueSource missingValueSource) {
