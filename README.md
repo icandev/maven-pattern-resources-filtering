@@ -19,7 +19,7 @@ By default, any missing values will be written as `${key}`.
               <dependency>
                   <groupId>be.icandev.maven</groupId>
                   <artifactId>maven-pattern-resources-filtering</artifactId>
-                  <version>1.0.0</version>
+                  <version>1.1.0</version>
               </dependency>
           </dependencies>
       </plugin>
